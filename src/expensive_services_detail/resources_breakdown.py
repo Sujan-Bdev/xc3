@@ -5,7 +5,6 @@ import logging
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 import json
 
-# Initialize and Connect to the AWS EC2 Service
 try:
     s3 = boto3.client("s3")
 except Exception as e:
@@ -13,7 +12,6 @@ except Exception as e:
 
 
 bucket_name = os.environ["bucket_name_get_report"]
-# report_prefix = 'report/'
 report_prefix = os.environ["report_prefix"]
 
 

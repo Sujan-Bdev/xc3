@@ -37,27 +37,12 @@ data "archive_file" "services_resources_cost_lambda_src" {
 
 
 # Creating Inline policy
-resource "aws_iam_role_policy" "ServicesResourcesCost" {
+resource "aws_iam_role_policy" "MostExpensiveServicesResourcesCost" {
   name = "${var.namespace}-lambda-inline-policy"
-  role = aws_iam_role.ServicesResourcesCost.id
+  role = aws_iam_role.MostExpensiveServicesResourcesCost.id
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
-      {
-        Sid = "CostExplorerAccess"
-        Action = [
-          "aws-portal:ViewBilling",
-          "ce:GetCostAndUsage",
-          "ec2:DescribeInstances",
-          "ec2:CreateNetworkInterface",
-          "ec2:DescribeNetworkInterfaces",
-          "ec2:DeleteNetworkInterface",
-          "ec2:AttachNetworkInterface",
-          "ec2:DetachNetworkInterface",
-        ]
-        Effect   = "Allow"
-        Resource = "*"
-      },
       {
         "Sid" : "LambdaInvokePermission",
         "Effect" : "Allow",
@@ -94,7 +79,7 @@ resource "aws_iam_role_policy" "ServicesResourcesCost" {
 }
 
 # Creating IAM Role for Lambda functions
-resource "aws_iam_role" "ServicesResourcesCost" {
+resource "aws_iam_role" "MostExpensiveServicesResourcesCost" {
   name = "${var.namespace}-services-resources-cost-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -113,12 +98,12 @@ resource "aws_iam_role" "ServicesResourcesCost" {
   tags                = merge(local.tags, tomap({ "Name" = "${var.namespace}-Services-Resources-Cost-Role" }))
 }
 
-resource "aws_lambda_function" "ResourcesCost" {
+resource "aws_lambda_function" "ResourcesOfExpensiveServicesCost" {
   #ts:skip=AWS.LambdaFunction.LM.MEIDUM.0063 We are aware of the risk and choose to skip this rule
   #ts:skip=AWS.LambdaFunction.Logging.0470 We are aware of the risk and choose to skip this rule
   #ts:skip=AWS.LambdaFunction.EncryptionandKeyManagement.0471 We are aware of the risk and choose to skip this rule
   function_name = "${var.namespace}-resources-cost-breakdown"
-  role          = aws_iam_role.ServicesResourcesCost.arn
+  role          = aws_iam_role.MostExpensiveServicesResourcesCost.arn
   runtime       = "python3.9"
   handler       = "resources_breakdown.lambda_handler"
   filename      = values(data.archive_file.services_resources_cost_lambda_src)[0].output_path
@@ -147,7 +132,7 @@ resource "aws_lambda_function" "ServicesCost" {
   #ts:skip=AWS.LambdaFunction.Logging.0470 We are aware of the risk and choose to skip this rule
   #ts:skip=AWS.LambdaFunction.EncryptionandKeyManagement.0471 We are aware of the risk and choose to skip this rule
   function_name = "${var.namespace}-expensive-services-cost"
-  role          = aws_iam_role.ServicesResourcesCost.arn
+  role          = aws_iam_role.MostExpensiveServicesResourcesCost.arn
   runtime       = "python3.9"
   handler       = "top_5_expensive_services.lambda_handler"
   filename      = values(data.archive_file.services_resources_cost_lambda_src)[1].output_path
@@ -158,7 +143,7 @@ resource "aws_lambda_function" "ServicesCost" {
       bucket_name_get_report        = var.s3_xc3_bucket.bucket
       report_prefix                 = var.s3_prefixes.report
       top5_expensive_service_prefix = var.s3_prefixes.top5_expensive_service_prefix
-      lambda_function_name          = aws_lambda_function.ResourcesCost.arn
+      lambda_function_name          = aws_lambda_function.ResourcesOfExpensiveServicesCost.arn
 
     }
   }
@@ -175,23 +160,24 @@ resource "aws_lambda_function" "ServicesCost" {
 
 }
 
-
+# delete lambda zip files after deployment of the lambdas
 resource "terraform_data" "delete_services_resources_lambda_zip_files" {
   for_each         = local.services_resources_lambda_archive
   triggers_replace = ["arn:aws:lambda:${var.region}:${var.account_id}:function:${each.key}"]
-  depends_on       = [aws_lambda_function.ResourcesCost, aws_lambda_function.ServicesCost]
+  depends_on       = [aws_lambda_function.ResourcesOfExpensiveServicesCost, aws_lambda_function.ServicesCost]
 
   provisioner "local-exec" {
     command = "rm -rf ${each.value.output_path}"
   }
 }
 
+# enable eventbridge for the bucket
 resource "aws_s3_bucket_notification" "bucket_notification" {
   bucket      = var.s3_xc3_bucket.id
   eventbridge = true
 }
 
-# EventBridge Rule
+# trigger lambda function when object created in S3
 resource "aws_cloudwatch_event_rule" "s3_event_rule" {
   name        = "s3_event_rule"
   description = "Rule to trigger Lambda functions on S3 events"
@@ -224,11 +210,6 @@ resource "aws_cloudwatch_event_target" "services_cost" {
   arn  = aws_lambda_function.ServicesCost.arn
 }
 
-# resource "aws_cloudwatch_event_target" "resources_cost" {
-#   rule = aws_cloudwatch_event_rule.s3_event_rule.name
-#   arn  = aws_lambda_function.ResourcesCost.arn
-# }
-
 resource "aws_iam_policy" "service_resources_event_policy" {
   name = "${var.namespace}-serviceresourceseventpolicy"
 
@@ -248,7 +229,7 @@ resource "aws_iam_policy" "service_resources_event_policy" {
 
 resource "aws_iam_role_policy_attachment" "services_resources_policy_attachment" {
   policy_arn = aws_iam_policy.service_resources_event_policy.arn
-  role       = aws_iam_role.ServicesResourcesCost.name
+  role       = aws_iam_role.MostExpensiveServicesResourcesCost.name
 }
 
 
@@ -259,11 +240,3 @@ resource "aws_lambda_permission" "services_cost_breakdown" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.s3_event_rule.arn
 }
-
-# resource "aws_lambda_permission" "resources_cost_breakdown" {
-#   statement_id  = "AllowExecutionFromEventBridge"
-#   action        = "lambda:InvokeFunction"
-#   function_name = aws_lambda_function.ResourcesCost.function_name
-#   principal     = "events.amazonaws.com"
-#   source_arn    = aws_cloudwatch_event_rule.s3_event_rule.arn
-# }

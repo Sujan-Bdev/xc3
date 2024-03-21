@@ -24,3 +24,5 @@ infrastructure/python/
 */*.out
 */*.env
 **/*.zip
+
+.DS_Store
