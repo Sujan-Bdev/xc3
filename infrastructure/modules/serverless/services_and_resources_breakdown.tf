@@ -44,6 +44,19 @@ resource "aws_iam_role_policy" "MostExpensiveServicesResourcesCost" {
     Version = "2012-10-17"
     Statement = [
       {
+        Sid = "ResourceBreakdown"
+        Action = [
+          "ec2:DescribeInstances",
+          "ec2:CreateNetworkInterface",
+          "ec2:DescribeNetworkInterfaces",
+          "ec2:DeleteNetworkInterface",
+          "ec2:AttachNetworkInterface",
+          "ec2:DetachNetworkInterface",
+        ]
+        Effect   = "Allow"
+        Resource = "*"
+      },
+      {
         "Sid" : "LambdaInvokePermission",
         "Effect" : "Allow",
         "Action" : [
